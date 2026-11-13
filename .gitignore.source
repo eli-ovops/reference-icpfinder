@@ -1,0 +1,17 @@
+node_modules/
+dist/
+.turbo/
+coverage/
+.env
+.env.local
+.env.*.local
+*.tsbuildinfo
+.DS_Store
+.vercel/
+.vercel
+
+# Private content (launch copy, drafts, internal notes) — never published.
+content/
+private/
+.notes/
+.env*.local

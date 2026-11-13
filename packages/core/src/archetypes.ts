@@ -1,0 +1,187 @@
+// SPDX-License-Identifier: MIT
+//
+// Archetype generation — prompts the LLM with the user's seed and
+// parses the JSON response into a typed Archetype[]. Defensive parse:
+// every field falls back to a placeholder rather than throwing, so
+// streaming partial results keeps flowing if the model misbehaves.
+
+import type { GenerateInput, LlmProvider } from "@icpfinder/providers";
+import type { Archetype, ExampleCompany } from "./types";
+
+const NON_DOMAIN_CHARS = /[^a-z0-9.-]/g;
+const PROTOCOL_OR_WWW = /^(?:https?:\/\/)?(?:www\.)?/i;
+const PATH_OR_QUERY = /[/?#].*$/;
+const BANNED_DOMAINS = new Set([
+  "example.com",
+  "example.org",
+  "example.net",
+  "test.com",
+  "acme.com",
+  "yourcompany.com",
+  "yoursite.com",
+  "placeholder.com",
+]);
+
+const normalizeDomain = (raw: unknown): string | null => {
+  if (typeof raw !== "string") return null;
+  const cleaned = raw
+    .trim()
+    .toLowerCase()
+    .replace(PROTOCOL_OR_WWW, "")
+    .replace(PATH_OR_QUERY, "")
+    .replace(NON_DOMAIN_CHARS, "");
+  if (!cleaned || !cleaned.includes(".")) return null;
+  if (BANNED_DOMAINS.has(cleaned)) return null;
+  if (cleaned.endsWith(".example") || cleaned.endsWith(".test")) return null;
+  return cleaned;
+};
+
+const coerceExampleCompanies = (v: unknown): ExampleCompany[] => {
+  if (!Array.isArray(v)) return [];
+  const seen = new Set<string>();
+  const out: ExampleCompany[] = [];
+  for (const entry of v) {
+    if (!entry || typeof entry !== "object") continue;
+    const obj = entry as Record<string, unknown>;
+    const domain = normalizeDomain(obj.domain);
+    if (!domain || seen.has(domain)) continue;
+    const name = typeof obj.name === "string" && obj.name.trim() ? obj.name.trim() : domain;
+    const whyNow =
+      typeof obj.whyNow === "string" && obj.whyNow.trim() ? obj.whyNow.trim() : undefined;
+    seen.add(domain);
+    out.push(whyNow ? { name, domain, whyNow } : { name, domain });
+  }
+  return out;
+};
+
+const SYSTEM_PROMPT = `You are an ICP (Ideal Customer Profile) analyst.
+You help founders and indie builders find concrete buyer personas for
+their product. Output is strict JSON only: a top-level array of
+archetype objects, no prose, no markdown fences.
+
+Each archetype object MUST have these exact fields:
+- industry (string, e.g. "B2B SaaS", "E-commerce")
+- role (string, decision-maker job title, e.g. "Head of Marketing")
+- companySize (string, e.g. "10-50 employees", "Series A")
+- pain (string, one-sentence concrete pain the product solves)
+- reasoning (string, 1-2 sentences explaining why this archetype is in
+  the set — what specific signal in the product/company description
+  made you select this persona)
+- sellingAngle (string, one-line outreach hook tailored to the persona
+  — the exact opener you'd use in a cold email. Concrete, not generic)
+- buyingSignals (string[], 3-5 observable signals the company is
+  currently in pain — e.g. "hiring SDRs", "recently funded",
+  "expanded to new market")
+- objections (string[], top 3 likely "no" lines this persona would
+  raise to your pitch — short, real, not strawmen)
+- exampleCompanies (object[], 3-8 REAL companies matching this
+  archetype RIGHT NOW. Each object: { name: string, domain: string,
+  whyNow: string }. Domain is the company's actual primary website
+  domain, no protocol, no path, no www ("stripe.com" not
+  "https://www.stripe.com/"). whyNow is one short line naming a
+  concrete recent trigger (funding, hiring, launch, expansion) — if
+  unknown, output a short hypothesis prefixed "likely:". Only include
+  companies you are highly confident exist and have that exact domain.
+  NEVER invent placeholder or example.com domains.)
+
+Generate distinct archetypes that target different buyer segments,
+not minor variations of the same persona.`;
+
+const buildUserPrompt = (seed: string, limit: number): string =>
+  `Product / company description:\n${seed.trim()}\n\nGenerate ${limit} distinct ICP archetypes as a JSON array.`;
+
+/**
+ * Strips common LLM artifacts — markdown fences, leading prose — and
+ * returns the JSON substring. Tolerant: the caller will JSON.parse and
+ * throw if even this fails.
+ */
+const extractJsonArray = (raw: string): string => {
+  const trimmed = raw.trim();
+  if (trimmed.startsWith("[")) return trimmed;
+  const fenceMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+  if (fenceMatch?.[1]) return fenceMatch[1].trim();
+  const start = trimmed.indexOf("[");
+  const end = trimmed.lastIndexOf("]");
+  if (start !== -1 && end !== -1 && end > start) {
+    return trimmed.slice(start, end + 1);
+  }
+  return trimmed;
+};
+
+const coerceString = (v: unknown, fallback: string): string =>
+  typeof v === "string" && v.trim() ? v.trim() : fallback;
+
+const coerceStringArray = (v: unknown): string[] => {
+  if (!Array.isArray(v)) return [];
+  return v
+    .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    .map((item) => item.trim());
+};
+
+export const parseArchetypes = (raw: string): Archetype[] => {
+  const json = extractJsonArray(raw);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  return parsed.map((entry, index) => {
+    const obj = (entry ?? {}) as Record<string, unknown>;
+    const reasoning = coerceString(obj.reasoning, "");
+    const sellingAngle = coerceString(obj.sellingAngle, "");
+    const objections = coerceStringArray(obj.objections).slice(0, 5);
+    const result: Archetype = {
+      id: `arch_${index}`,
+      industry: coerceString(obj.industry, "Unknown industry"),
+      role: coerceString(obj.role, "Unknown role"),
+      companySize: coerceString(obj.companySize, "Unknown size"),
+      pain: coerceString(obj.pain, ""),
+      buyingSignals: coerceStringArray(obj.buyingSignals),
+      exampleCompanies: coerceExampleCompanies(obj.exampleCompanies),
+    };
+    if (reasoning) result.reasoning = reasoning;
+    if (sellingAngle) result.sellingAngle = sellingAngle;
+    if (objections.length > 0) result.objections = objections;
+    return result;
+  });
+};
+
+export interface GenerateArchetypesInput {
+  llm: LlmProvider;
+  seed: string;
+  limit: number;
+  grounding: boolean;
+  timeoutMs?: number;
+}
+
+export interface GenerateArchetypesResult {
+  archetypes: Archetype[];
+  costCents: number;
+  stub: boolean;
+}
+
+/**
+ * One LLM call. The provider's stub mode returns a deterministic
+ * single-archetype fixture, so callers always get at least one
+ * archetype back (or an empty array if the model returns garbage).
+ */
+export const generateArchetypes = async (
+  input: GenerateArchetypesInput
+): Promise<GenerateArchetypesResult> => {
+  const genInput: GenerateInput = {
+    system: SYSTEM_PROMPT,
+    prompt: buildUserPrompt(input.seed, input.limit),
+    format: "json",
+    grounding: input.grounding,
+    timeoutMs: input.timeoutMs,
+  };
+  const result = await input.llm.generate(genInput);
+  const archetypes = parseArchetypes(result.text).slice(0, input.limit);
+  return {
+    archetypes,
+    costCents: result.cost.costCents,
+    stub: result.stub,
+  };
+};

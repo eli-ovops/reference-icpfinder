@@ -1,0 +1,47 @@
+// SPDX-License-Identifier: MIT
+
+import { Analytics } from "@vercel/analytics/next";
+import type { Metadata } from "next";
+import type { ReactNode } from "react";
+import "./globals.css";
+
+export const metadata: Metadata = {
+  metadataBase: new URL("https://icpfinder.dev"),
+  title: {
+    default: "icpfinder — find your ICP in 30 seconds",
+    template: "%s — icpfinder",
+  },
+  description:
+    "Paste your product idea. Stream three buyer archetypes + 15 lookalike companies with verified contact emails. Open source, MIT, self-host.",
+  alternates: { canonical: "/" },
+  twitter: { card: "summary_large_image" },
+};
+
+const modeBootstrap = `(function(){try{var m=localStorage.getItem('icpfinder.mode');if(m==='light'||m==='dark'){document.documentElement.setAttribute('data-mode',m);}else if(window.matchMedia('(prefers-color-scheme: dark)').matches){document.documentElement.setAttribute('data-mode','dark');}}catch(e){}})();`;
+
+export default function RootLayout({ children }: { children: ReactNode }) {
+  return (
+    <html lang="en">
+      <head>
+        <link rel="preconnect" href="https://fonts.bunny.net" crossOrigin="anonymous" />
+        <link
+          rel="stylesheet"
+          href="https://fonts.bunny.net/css?family=hanken-grotesk:400,500,600,700|jetbrains-mono:400,500,600&display=swap"
+        />
+        <script
+          // biome-ignore lint/security/noDangerouslySetInnerHtml: FOUC prevention requires inline script before paint.
+          dangerouslySetInnerHTML={{ __html: modeBootstrap }}
+        />
+      </head>
+      <body className="flex min-h-screen flex-col">
+        {children}
+        {/* Vercel Web Analytics. No-op when process.env.VERCEL_ENV is unset, */}
+        {/* so self-hosters (non-Vercel deploys) get zero requests to */}
+        {/* /_vercel/insights/*. See docs/telemetry.md. Pinned exact to 1.5.0 */}
+        {/* in package.json because the self-host no-fire contract is */}
+        {/* version-specific. Bumping requires re-verifying that contract. */}
+        <Analytics />
+      </body>
+    </html>
+  );
+}

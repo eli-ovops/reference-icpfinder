@@ -1,0 +1,51 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**", ".next/**"]
+    },
+    "@icpfinder/core#build": {
+      "dependsOn": ["@icpfinder/providers#build"],
+      "outputs": ["dist/**"]
+    },
+    "@icpfinder/core#typecheck": {
+      "dependsOn": ["@icpfinder/providers#build"]
+    },
+    "@icpfinder/core#test": {
+      "dependsOn": ["@icpfinder/providers#build"]
+    },
+    "@icpfinder/web#build": {
+      "dependsOn": ["@icpfinder/core#build", "@icpfinder/providers#build"],
+      "outputs": [".next/**"],
+      "env": [
+        "DATABASE_URL",
+        "DATABASE_URL_UNPOOLED",
+        "GEMINI_API_KEY",
+        "HUNTER_API_KEY",
+        "UPSTASH_REDIS_REST_URL",
+        "UPSTASH_REDIS_REST_TOKEN",
+        "KV_REST_API_URL",
+        "KV_REST_API_TOKEN",
+        "ICPFINDER_BUDGET_CAP_CENTS",
+        "ICPFINDER_DAILY_CAP_CENTS",
+        "ICPFINDER_DAILY_RUNS",
+        "ICPFINDER_IP_SALT",
+        "ICPFINDER_MONTHLY_BUDGET_USD",
+        "NODE_ENV"
+      ]
+    },
+    "test": {
+      "dependsOn": ["^build"]
+    },
+    "typecheck": {
+      "dependsOn": ["^build"]
+    },
+    "lint": {},
+    "dev": {
+      "dependsOn": ["^build"],
+      "cache": false,
+      "persistent": true
+    }
+  }
+}
